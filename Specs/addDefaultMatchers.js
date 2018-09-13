@@ -291,7 +291,7 @@ define([
 
             notToPick : function(util, customEqualityTesters) {
                 return {
-                    compare : function(actual, expected, x, y, width, height) {
+                    compare : function(actual, x, y, width, height) {
                         return pickPrimitiveEquals(actual, undefined, x, y, width, height);
                     }
                 };
@@ -307,7 +307,7 @@ define([
 
             notToDrillPick : function(util, customEqualityTesters) {
                 return {
-                    compare : function(actual, expected, x, y, width, height) {
+                    compare : function(actual, x, y, width, height) {
                         return drillPickPrimitiveEquals(actual, 0, x, y, width, height);
                     }
                 };
@@ -336,9 +336,9 @@ define([
 
             toDrillPickAndCall : function(util, customEqualityTesters) {
                 return {
-                    compare : function(actual, expected) {
+                    compare : function(actual, expected, limit) {
                         var scene = actual;
-                        var pickedObjects = scene.drillPick(new Cartesian2(0, 0));
+                        var pickedObjects = scene.drillPick(new Cartesian2(0, 0), limit);
 
                         var webglStub = !!window.webglStub;
                         if (!webglStub) {
@@ -346,6 +346,122 @@ define([
                             // spec fail, as we desired, even though this matcher sets pass to true.
                             var callback = expected;
                             callback(pickedObjects);
+                        }
+
+                        return {
+                            pass : true
+                        };
+                    }
+                };
+            },
+
+            toPickFromRay : function(util, customEqualityTesters) {
+                return {
+                    compare : function(actual, expected, ray) {
+                        return pickFromRayEquals(actual, expected, ray);
+                    }
+                };
+            },
+
+            notToPickFromRay : function(util, customEqualityTesters) {
+                return {
+                    compare : function(actual, ray) {
+                        return pickFromRayEquals(actual, undefined, ray);
+                    }
+                };
+            },
+
+            toDrillPickFromRay : function(util, customEqualityTesters) {
+                return {
+                    compare : function(actual, expected, ray) {
+                        return drillPickFromRayEquals(actual, 1, ray);
+                    }
+                };
+            },
+
+            notToDrillPickFromRay : function(util, customEqualityTesters) {
+                return {
+                    compare : function(actual, ray) {
+                        return drillPickFromRayEquals(actual, 0, ray);
+                    }
+                };
+            },
+
+            toPickFromRayAndCall : function(util, customEqualityTesters) {
+                return {
+                    compare : function(actual, expected, ray) {
+                        var scene = actual;
+                        var result = scene.pickFromRay(ray);
+
+                        var webglStub = !!window.webglStub;
+                        if (!webglStub) {
+                            // The callback may have expectations that fail, which still makes the
+                            // spec fail, as we desired, even though this matcher sets pass to true.
+                            var callback = expected;
+                            callback(result);
+                        }
+
+                        return {
+                            pass : true
+                        };
+                    }
+                };
+            },
+
+            toDrillPickFromRayAndCall : function(util, customEqualityTesters) {
+                return {
+                    compare : function(actual, expected, ray, limit) {
+                        var scene = actual;
+                        var pickedObjects = scene.drillPickFromRay(ray, limit);
+
+                        var webglStub = !!window.webglStub;
+                        if (!webglStub) {
+                            // The callback may have expectations that fail, which still makes the
+                            // spec fail, as we desired, even though this matcher sets pass to true.
+                            var callback = expected;
+                            callback(pickedObjects);
+                        }
+
+                        return {
+                            pass : true
+                        };
+                    }
+                };
+            },
+
+            toPickPositionFromRayAndCall : function(util, customEqualityTesters) {
+                return {
+                    compare : function(actual, expected, ray) {
+                        var scene = actual;
+                        var position = scene.pickPositionFromRay(ray);
+
+                        var webglStub = !!window.webglStub;
+                        if (!webglStub) {
+                            // The callback may have expectations that fail, which still makes the
+                            // spec fail, as we desired, even though this matcher sets pass to true.
+                            var callback = expected;
+                            callback(position);
+                        }
+
+                        return {
+                            pass : true
+                        };
+                    }
+                };
+            },
+
+            toDrillPickPositionFromRayAndCall : function(util, customEqualityTesters) {
+                return {
+                    compare : function(actual, expected, ray, limit) {
+                        var scene = actual;
+                        var positions = scene.drillPickPositionFromRay(ray, limit);
+
+                        var webglStub = !!window.webglStub;
+                        if (!webglStub) {
+                            // The callback may have expectations that fail, which still makes the
+                            // spec fail, as we desired, even though this matcher sets pass to true.
+                            var callback = expected;
+                            callback(positions);
                         }
 
                         return {
@@ -552,6 +668,65 @@ define([
         var scene = actual;
         var windowPosition = new Cartesian2(x, y);
         var result = scene.drillPick(windowPosition, undefined, width, height);
+
+        if (!!window.webglStub) {
+            return {
+                pass : true
+            };
+        }
+
+        var pass = true;
+        var message;
+
+        if (defined(expected)) {
+            pass = (result.length === expected);
+        } else {
+            pass = !defined(result);
+        }
+
+        if (!pass) {
+            message = 'Expected to pick ' + expected + ', but picked: ' + result;
+        }
+
+        return {
+            pass : pass,
+            message : message
+        };
+    }
+
+    function pickFromRayEquals(actual, expected, ray) {
+        debugger;
+        var scene = actual;
+        var result = scene.pickFromRay(ray);
+
+        if (!!window.webglStub) {
+            return {
+                pass : true
+            };
+        }
+
+        var pass = true;
+        var message;
+
+        if (defined(expected)) {
+            pass = (result.primitive === expected);
+        } else {
+            pass = !defined(result);
+        }
+
+        if (!pass) {
+            message = 'Expected to pick ' + expected + ', but picked: ' + result;
+        }
+
+        return {
+            pass : pass,
+            message : message
+        };
+    }
+
+    function drillPickFromRayEquals(actual, expected, ray) {
+        var scene = actual;
+        var result = scene.drillPickFromRay(ray);
 
         if (!!window.webglStub) {
             return {

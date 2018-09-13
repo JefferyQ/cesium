@@ -892,6 +892,32 @@ define([
         },
 
         /**
+         * Returns true if the sampleHeight function is supported.
+         * @memberof Scene.prototype
+         *
+         * @type {Boolean}
+         * @readonly
+         */
+        sampleHeightSupported : {
+            get : function() {
+                return this._context.depthTexture;
+            }
+        },
+
+        /**
+         * Returns true if the clampToHeight function is supported.
+         * @memberof Scene.prototype
+         *
+         * @type {Boolean}
+         * @readonly
+         */
+        clampToHeightSupported : {
+            get : function() {
+                return this._context.depthTexture;
+            }
+        },
+
+        /**
          * Gets or sets the depth-test ellipsoid.
          * @memberof Scene.prototype
          *
@@ -3475,7 +3501,19 @@ define([
         return result;
     };
 
-    function drillPick(limit, pickCallback) {
+    function isExcluded(object, objectsToExclude) {
+        if (!defined(objectsToExclude) || objectsToExclude.length === 0) {
+            return false;
+        }
+        var primitive = object.primitive;
+        var id = object.id;
+        return (objectsToExclude.indexOf(object) > -1) ||
+               (objectsToExclude.indexOf(primitive) > -1) ||
+               (objectsToExclude.indexOf(id) > -1);
+    }
+
+
+    function drillPick(limit, pickCallback, objectsToExclude) {
         // PERFORMANCE_IDEA: This function calls each primitive's update for each pass. Instead
         // we could update the primitive once, and then just execute their commands for each pass,
         // and cull commands for picked primitives.  e.g., base on the command's owner.
@@ -3491,13 +3529,16 @@ define([
 
         var pickedResult = pickCallback();
         while (defined(pickedResult) && defined(pickedResult.object) && defined(pickedResult.object.primitive)) {
-            result.push(pickedResult);
-            if (0 >= --limit) {
-                break;
-            }
-
             var object = pickedResult.object;
             var primitive = object.primitive;
+
+            if (!isExcluded(object, objectsToExclude)) {
+                result.push(pickedResult);
+                if (0 >= --limit) {
+                    break;
+                }
+            }
+
             var hasShowAttribute = false;
 
             // If the picked object has a show attribute, use it.
@@ -3544,10 +3585,46 @@ define([
         return result;
     }
 
+    /**
+     * Returns a list of objects, each containing a `primitive` property, for all primitives at
+     * a particular window coordinate position. Other properties may also be set depending on the
+     * type of primitive. The primitives in the list are ordered by their visual order in the
+     * scene (front to back).
+     *
+     * @param {Cartesian2} windowPosition Window coordinates to perform picking on.
+     * @param {Number} [limit] If supplied, stop drilling after collecting this many picks.
+     * @param {Number} [width=3] Width of the pick rectangle.
+     * @param {Number} [height=3] Height of the pick rectangle.
+     * @returns {Object[]} Array of objects, each containing 1 picked primitives.
+     *
+     * @exception {DeveloperError} windowPosition is undefined.
+     *
+     * @example
+     * var pickedObjects = scene.drillPick(new Cesium.Cartesian2(100.0, 200.0));
+     *
+     * @see Scene#pick
+     *
+     */
+    Scene.prototype.drillPick = function(windowPosition, limit, width, height) {
+        var that = this;
+        var pickCallback = function() {
+            var object = that.pick(windowPosition, width, height);
+            if (defined(object)) {
+                return {
+                    object : object
+                };
+            }
+        };
+        var objects = drillPick(limit, pickCallback);
+        return objects.map(function(element) {
+            return element.object;
+        });
+    };
+
     var scratchRight = new Cartesian3();
     var scratchUp = new Cartesian3();
 
-    function pickFromRay(scene, ray, pickPosition, pickObject) {
+    function getRayIntersection(scene, ray) {
         var context = scene._context;
         var uniformState = context.uniformState;
         var frameState = scene._frameState;
@@ -3585,14 +3662,9 @@ define([
         resolveFramebuffers(scene, passState);
 
         var position;
-        var object;
+        var object = view.pickFramebuffer.end(context);
 
-        if (pickObject) {
-            object = view.pickFramebuffer.end(context);
-            pickPosition = pickPosition && defined(object);
-        }
-
-        if (pickPosition) {
+        if (scene._context.depthTexture) {
             var numFrustums = view.frustumCommandsList.length;
             for (var i = 0; i < numFrustums; ++i) {
                 var pickDepth = getPickDepth(scene, i);
@@ -3622,166 +3694,71 @@ define([
         context.endFrame();
         callAfterRenderFunctions(scene);
 
-        if (!defined(object) && !defined(position)) {
-            return;
+        if (defined(object)) {
+            return {
+                object : object,
+                position : position
+            };
         }
+    }
 
-        return {
-            object : object,
-            position : position
+    function getRayIntersections(scene, ray, limit, objectsToExclude) {
+        //>>includeStart('debug', pragmas.debug);
+        Check.defined('ray', ray);
+        if (this._mode !== SceneMode.SCENE3D) {
+            throw new DeveloperError('Ray intersections are only supported in 3D mode.');
+        }
+        //>>includeEnd('debug');
+        var pickCallback = function() {
+            return getRayIntersection(scene, ray);
         };
+        return drillPick(limit, pickCallback, objectsToExclude);
     }
 
     /**
-     * Returns an object with a `primitive` property that contains the first (top) primitive in the scene
-     * hit by the ray or undefined if nothing is hit. Other properties may potentially be set depending on the type
-     * of primitive and may be used to further identify the picked object.
-     * <p>
-     * When a feature of a 3D Tiles tileset is picked, <code>pick</code> returns a {@link Cesium3DTileFeature} object.
-     * </p>
+     * Returns an object containing the first object hit by the ray and the position of intersection,
+     * or <code>undefined</code> if nothing is hit. The hit object contains a <code>primitive</code> property and
+     * may contain other properties used to further identity the picked object. The ray must be given in world coordinates.
      *
      * @private
      *
-     * @param {Ray} ray The ray to pick from.
-     * @returns {Object} Object containing the picked primitive.
+     * @param {Ray} ray The ray.
+     * @param {Object} [options] Options to control ray intersection behavior.
+     * @param {Object[]} [options.objectsToExclude] A list of primitives and/or entities to exclude from the ray intersection.
+     * @returns {Object} An object containing the first object hit and the position of intersection.
      *
-     * @see Scene#pick
+     * @exception {DeveloperError} Ray intersections are only supported in 3D mode.
      */
-    Scene.prototype.pickFromRay = function(ray) {
-        //>>includeStart('debug', pragmas.debug);
-        Check.defined('ray', ray);
-        //>>includeEnd('debug');
-        var pickResult = pickFromRay(this, ray, false, true);
-        if (defined(pickResult)) {
-            return pickResult.object;
+    Scene.prototype.getRayIntersection = function(ray, options) {
+        options = defaultValue(options, defaultValue.EMPTY_OBJECT);
+        var results = getRayIntersections(this, ray, 1, options.objectsToExclude);
+        if (results.length > 0) {
+            return results[0];
         }
     };
 
     /**
-     * Returns the cartesian position of the first intersection of the ray or undefined if nothing is hit.
+     * Returns a list of ray intersection results.
      *
      * @private
      *
-     * @param {Ray} ray The ray to pick from.
-     * @param {Cartesian3} [result] The object on which to restore the result.
-     * @returns {Cartesian3} The cartesian position.
+     * @param {Ray} ray The ray.
+     * @param {Object} [options] Options to control ray intersection behavior.
+     * @param {Number} [options.limit=Number.MAX_VALUE] If supplied, stop finding intersections after this many intersections.
+     * @param {Object[]} [options.objectsToExclude] A list of primitives and/or entities to exclude from the ray intersection.
+     * @returns {Object[]} Array of ray intersection results.
      *
-     * @exception {DeveloperError} Picking from the depth buffer is not supported. Check pickPositionSupported.
+     * @exception {DeveloperError} Ray intersections are only supported in 3D mode.
      */
-    Scene.prototype.pickPositionFromRay = function(ray, result) {
-        //>>includeStart('debug', pragmas.debug);
-        Check.defined('ray', ray);
-        if (!this.pickPositionSupported) {
-            throw new DeveloperError('Picking from the depth buffer is not supported. Check pickPositionSupported.');
-        }
-        //>>includeEnd('debug');
-        var pickResult = pickFromRay(this, ray, true, false);
-        if (defined(pickResult)) {
-            return Cartesian3.clone(pickResult.position, result);
-        }
-    };
-
-    /**
-     * Returns a list of objects, each containing a `primitive` property, for all primitives hit
-     * by the ray. Other properties may also be set depending on the type of primitive and may be
-     * used to further identify the picked object.
-     * The primitives in the list are ordered by their visual order in the scene (front to back).
-     *
-     * @private
-     *
-     * @param {Ray} ray The ray to pick from.
-     * @param {Number} [limit] If supplied, stop drilling after collecting this many picks.
-     * @returns {Object[]} Array of objects, each containing 1 picked primitives.
-     *
-     * @see Scene#drillPick
-     */
-    Scene.prototype.drillPickFromRay = function(ray, limit) {
-        //>>includeStart('debug', pragmas.debug);
-        Check.defined('ray', ray);
-        //>>includeEnd('debug');
-        var that = this;
-        var pickCallback = function() {
-            return pickFromRay(that, ray, false, true);
-        };
-        var objects = drillPick(limit, pickCallback);
-        return objects.map(function(element) {
-            return element.object;
-        });
-    };
-
-    /**
-     * Returns a list of cartesian positions containing intersections of the ray in the scene.
-     *
-     * @private
-     *
-     * @param {Ray} ray The ray to pick from.
-     * @param {Number} [limit] If supplied, stop drilling after collecting this many picks.
-     * @returns {Cartesian3[]} Array of cartesian positions.
-     *
-     * @exception {DeveloperError} Picking from the depth buffer is not supported. Check pickPositionSupported.
-     */
-    Scene.prototype.drillPickPositionFromRay = function(ray, limit) {
-        //>>includeStart('debug', pragmas.debug);
-        Check.defined('ray', ray);
-        //>>includeEnd('debug');
-        if (!this.pickPositionSupported) {
-            throw new DeveloperError('Picking from the depth buffer is not supported. Check pickPositionSupported.');
-        }
-        var that = this;
-        var pickCallback = function() {
-            return pickFromRay(that, ray, true, true);
-        };
-        var objects = drillPick(limit, pickCallback);
-        return objects.map(function(element) {
-            return element.position;
-        });
-    };
-
-    /**
-     * Returns a list of objects, each containing a `primitive` property, for all primitives at
-     * a particular window coordinate position. Other properties may also be set depending on the
-     * type of primitive. The primitives in the list are ordered by their visual order in the
-     * scene (front to back).
-     *
-     * @param {Cartesian2} windowPosition Window coordinates to perform picking on.
-     * @param {Number} [limit] If supplied, stop drilling after collecting this many picks.
-     * @param {Number} [width=3] Width of the pick rectangle.
-     * @param {Number} [height=3] Height of the pick rectangle.
-     * @returns {Object[]} Array of objects, each containing 1 picked primitives.
-     *
-     * @exception {DeveloperError} windowPosition is undefined.
-     *
-     * @example
-     * var pickedObjects = scene.drillPick(new Cesium.Cartesian2(100.0, 200.0));
-     *
-     * @see Scene#pick
-     *
-     */
-    Scene.prototype.drillPick = function(windowPosition, limit, width, height) {
-        //>>includeStart('debug', pragmas.debug);
-        Check.defined('windowPosition', windowPosition);
-        //>>includeEnd('debug');
-        var that = this;
-        var pickCallback = function() {
-            var object = that.pick(windowPosition, width, height);
-            if (defined(object)) {
-                return {
-                    object : object
-                };
-            }
-        };
-        var objects = drillPick(limit, pickCallback);
-        return objects.map(function(element) {
-            return element.object;
-        });
+    Scene.prototype.getRayIntersections = function(ray, options) {
+        return getRayIntersections(this, ray, options.limit, options.objectsToExclude);
     };
 
     var scratchSurfacePosition = new Cartesian3();
     var scratchSurfaceNormal = new Cartesian3();
     var scratchSurfaceRay = new Ray();
     var scratchRay = new Ray();
-    var scratchPickPosition = new Cartesian3();
-    var scratchPickCartographic = new Cartographic();
+    var scratchCartographic = new Cartographic();
 
     /**
      * Returns the height of scene geometry at the given cartographic position. May be used to clamp objects
@@ -3792,20 +3769,20 @@ define([
      * </p>
      *
      * @param {Cartographic} position The position to sample from.
-     * @param {Object[]} objectsToExclude A list of primitives and/or entities to exclude from the sample height calculation.
+     * @param {Object} [options] Object with the following properties:
+     * @param {Object[]} [options.objectsToExclude] A list of primitives and/or entities to exclude from the sampling.
      * @returns {Number} The height. This may be <code>undefined</code> if there is nothing to sample height from.
      *
-     * @see sampleTerrain
-     * @see sampleTerrainMostDetailed
      * @see Scene#clampToHeight
      *
-     * @exception {DeveloperError} Picking from the depth buffer is not supported. Check pickPositionSupported.
+     * @exception {DeveloperError} Ray intersections are only supported in 3D mode.
+     * @exception {DeveloperError} sampleHeight required depth texture support. Check sampleHeightSupported.
      */
-    Scene.prototype.sampleHeight = function(position, objectsToExclude) {
+    Scene.prototype.sampleHeight = function(position, options) {
         //>>includeStart('debug', pragmas.debug);
         Check.defined('position', position);
-        if (!this.pickPositionSupported) {
-            throw new DeveloperError('Picking from the depth buffer is not supported. Check pickPositionSupported.');
+        if (!this.sampleHeightSupported) {
+            throw new DeveloperError('sampleHeight required depth texture support. Check sampleHeightSupported.');
         }
         //>>includeEnd('debug');
         var globe = this.globe;
@@ -3820,34 +3797,11 @@ define([
         Ray.getPoint(surfaceRay, height, ray.origin);
         Cartesian3.negate(surfaceNormal, ray.direction);
 
-        var pickPosition;
-
-        if (defined(objectsToExclude) && objectsToExclude.length > 0) {
-            var that = this;
-            var pickCallback = function() {
-                return pickFromRay(that, ray, true, true);
-            };
-            var results = drillPick(undefined, pickCallback);
-            var length = results.length;
-            for (var i = 0; i < length; ++i) {
-                var object = results[i].object;
-                var primitive = object.primitive;
-                var id = object.id;
-
-                if ((objectsToExclude.indexOf(object) === -1) &&
-                    (objectsToExclude.indexOf(primitive) === -1) &&
-                    (objectsToExclude.indexOf(id) === -1)) {
-                    pickPosition = results[i].position;
-                    break;
-                }
-            }
-        } else {
-            pickPosition = this.pickPositionFromRay(ray, scratchPickPosition);
-        }
-
-        if (defined(pickPosition)) {
-            var pickCartographic = Cartographic.fromCartesian(pickPosition, ellipsoid, scratchPickCartographic);
-            return pickCartographic.height;
+        var result = this.getRayIntersection(ray, options);
+        if (defined(result)) {
+            var cartesian = result.position;
+            var cartographic = Cartographic.fromCartesian(cartesian, ellipsoid, scratchCartographic);
+            return cartographic.height;
         }
     };
 
@@ -3860,19 +3814,24 @@ define([
      * </p>
      *
      * @param {Cartesian3} cartesian The Cartesian position.
-     * @param {Object[]} objectsToExclude A list of primitives and/or entities to exclude when clamping.
+     * @param {Object} [options] Object with the following properties:
+     * @param {Object[]} [options.objectsToExclude] A list of primitives and/or entities to exclude from the clamping.
      * @param {Cartesian3} [result] An optional object to return the clamped position.
      * @returns {Cartesian3} The modified result parameter or a new Cartesian3 instance if one was not provided.  This may be <code>undefined</code> if the position could not be clamped.
      *
      * @see Scene#sampleHeight
      *
-     * @exception {DeveloperError} Picking from the depth buffer is not supported. Check pickPositionSupported.
+     * @exception {DeveloperError} Ray intersections are only supported in 3D mode.
+     * @exception {DeveloperError} clampToHeight required depth texture support. Check clampToHeightSupported.
      */
-    Scene.prototype.clampToHeight = function(cartesian, objectsToExclude, result) {
+    Scene.prototype.clampToHeight = function(cartesian, options, result) {
+        //>>includeStart('debug', pragmas.debug);
+        Check.defined('cartesian', cartesian);
+        //>>includeEnd('debug');
         var globe = this.globe;
         var ellipsoid = defined(globe) ? globe.ellipsoid : this.mapProjection.ellipsoid;
-        var cartographic = Cartographic.fromCartesian(cartesian, ellipsoid, scratchPickCartographic);
-        var height = this.sampleHeight(cartographic, objectsToExclude);
+        var cartographic = Cartographic.fromCartesian(cartesian, ellipsoid, scratchCartographic);
+        var height = this.sampleHeight(cartographic, options);
         if (defined(height)) {
             cartographic.height = height;
             return Cartographic.toCartesian(cartographic, ellipsoid, result);

@@ -3548,6 +3548,16 @@ define([
     var scratchUp = new Cartesian3();
 
     function pickFromRay(scene, ray, pickPosition, pickObject) {
+        //>>includeStart('debug', pragmas.debug);
+        Check.defined('ray', ray);
+        if (pickPosition && !scene.pickPositionSupported) {
+            throw new DeveloperError('Picking from the depth buffer is not supported. Check pickPositionSupported.');
+        }
+        if (scene._mode === SceneMode.SCENE2D) {
+            throw new DeveloperError('Pick from ray is not supported in 2D.');
+        }
+        //>>includeEnd('debug');
+
         var context = scene._context;
         var uniformState = context.uniformState;
         var frameState = scene._frameState;
@@ -3635,7 +3645,7 @@ define([
     /**
      * Returns an object with a `primitive` property that contains the first (top) primitive in the scene
      * hit by the ray or undefined if nothing is hit. Other properties may potentially be set depending on the type
-     * of primitive and may be used to further identify the picked object.
+     * of primitive and may be used to further identify the picked object. The ray must be given in world coordinates.
      * <p>
      * When a feature of a 3D Tiles tileset is picked, <code>pick</code> returns a {@link Cesium3DTileFeature} object.
      * </p>
@@ -3648,9 +3658,6 @@ define([
      * @see Scene#pick
      */
     Scene.prototype.pickFromRay = function(ray) {
-        //>>includeStart('debug', pragmas.debug);
-        Check.defined('ray', ray);
-        //>>includeEnd('debug');
         var pickResult = pickFromRay(this, ray, false, true);
         if (defined(pickResult)) {
             return pickResult.object;
@@ -3658,7 +3665,8 @@ define([
     };
 
     /**
-     * Returns the cartesian position of the first intersection of the ray or undefined if nothing is hit.
+     * Returns the position, in world coordinates, of the first intersection of the ray or undefined if nothing is hit.
+     * The ray must be given in world coordinates.
      *
      * @private
      *
@@ -3669,12 +3677,6 @@ define([
      * @exception {DeveloperError} Picking from the depth buffer is not supported. Check pickPositionSupported.
      */
     Scene.prototype.pickPositionFromRay = function(ray, result) {
-        //>>includeStart('debug', pragmas.debug);
-        Check.defined('ray', ray);
-        if (!this.pickPositionSupported) {
-            throw new DeveloperError('Picking from the depth buffer is not supported. Check pickPositionSupported.');
-        }
-        //>>includeEnd('debug');
         var pickResult = pickFromRay(this, ray, true, false);
         if (defined(pickResult)) {
             return Cartesian3.clone(pickResult.position, result);
@@ -3684,7 +3686,7 @@ define([
     /**
      * Returns a list of objects, each containing a `primitive` property, for all primitives hit
      * by the ray. Other properties may also be set depending on the type of primitive and may be
-     * used to further identify the picked object.
+     * used to further identify the picked object. The ray must be given in world coordinates.
      * The primitives in the list are ordered by their visual order in the scene (front to back).
      *
      * @private
@@ -3696,9 +3698,6 @@ define([
      * @see Scene#drillPick
      */
     Scene.prototype.drillPickFromRay = function(ray, limit) {
-        //>>includeStart('debug', pragmas.debug);
-        Check.defined('ray', ray);
-        //>>includeEnd('debug');
         var that = this;
         var pickCallback = function() {
             return pickFromRay(that, ray, false, true);
@@ -3710,7 +3709,7 @@ define([
     };
 
     /**
-     * Returns a list of cartesian positions containing intersections of the ray in the scene.
+     * Returns a list of cartesian positions, in world coordinates, containing intersections of the ray in the scene.
      *
      * @private
      *
@@ -3721,9 +3720,6 @@ define([
      * @exception {DeveloperError} Picking from the depth buffer is not supported. Check pickPositionSupported.
      */
     Scene.prototype.drillPickPositionFromRay = function(ray, limit) {
-        //>>includeStart('debug', pragmas.debug);
-        Check.defined('ray', ray);
-        //>>includeEnd('debug');
         if (!this.pickPositionSupported) {
             throw new DeveloperError('Picking from the depth buffer is not supported. Check pickPositionSupported.');
         }
@@ -3758,9 +3754,6 @@ define([
      *
      */
     Scene.prototype.drillPick = function(windowPosition, limit, width, height) {
-        //>>includeStart('debug', pragmas.debug);
-        Check.defined('windowPosition', windowPosition);
-        //>>includeEnd('debug');
         var that = this;
         var pickCallback = function() {
             var object = that.pick(windowPosition, width, height);
@@ -3804,9 +3797,6 @@ define([
     Scene.prototype.sampleHeight = function(position, objectsToExclude) {
         //>>includeStart('debug', pragmas.debug);
         Check.defined('position', position);
-        if (!this.pickPositionSupported) {
-            throw new DeveloperError('Picking from the depth buffer is not supported. Check pickPositionSupported.');
-        }
         //>>includeEnd('debug');
         var globe = this.globe;
         var ellipsoid = defined(globe) ? globe.ellipsoid : this.mapProjection.ellipsoid;
@@ -3869,6 +3859,9 @@ define([
      * @exception {DeveloperError} Picking from the depth buffer is not supported. Check pickPositionSupported.
      */
     Scene.prototype.clampToHeight = function(cartesian, objectsToExclude, result) {
+        //>>includeStart('debug', pragmas.debug);
+        Check.defined('cartesian', cartesian);
+        //>>includeEnd('debug');
         var globe = this.globe;
         var ellipsoid = defined(globe) ? globe.ellipsoid : this.mapProjection.ellipsoid;
         var cartographic = Cartographic.fromCartesian(cartesian, ellipsoid, scratchPickCartographic);

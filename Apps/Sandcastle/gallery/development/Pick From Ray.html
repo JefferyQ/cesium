@@ -46,6 +46,13 @@ var tileset = viewer.scene.primitives.add(new Cesium.Cesium3DTileset({
     url: '../../SampleData/Cesium3DTiles/Tilesets/Tileset/tileset.json'
 }));
 
+tileset.style = new Cesium.Cesium3DTileStyle({
+    defines : {
+        alpha : '${id} % 2 === 0 ? 0.5 : 1.0'
+    },
+    color : 'rgba(255, 255, 255, ${alpha})'
+});
+
 viewer.zoomTo(tileset);
 
 var blueCartographic = new Cesium.Cartographic(-1.3196863177294136, 0.6988508714746624, 30.0);
@@ -95,7 +102,7 @@ for (i = 0; i < limit; ++i) {
 
 function hideAll() {
     for (i = 0; i < pickedFeatures.length; ++i) {
-        pickedFeatures[i].color = Cesium.Color.WHITE;
+        pickedFeatures[i].color = Cesium.Color.fromAlpha(Cesium.Color.WHITE, pickedFeatures[i].color.alpha);
     }
     for (i = 0; i < limit; ++i) {
         hitSpheres[i].show = false;
@@ -144,7 +151,7 @@ function pickFromRay() {
     for (i = 0; i < objects.length; ++i) {
         if (objects[i] instanceof Cesium.Cesium3DTileFeature) {
             pickedFeatures.push(objects[i]);
-            objects[i].color = Cesium.Color.YELLOW;
+            objects[i].color = Cesium.Color.fromAlpha(Cesium.Color.YELLOW, objects[i].color.alpha);
         }
     }
     for (i = 0; i < positions.length; ++i) {
@@ -179,7 +186,6 @@ handler.setInputAction(function(movement) {
         });
     });
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
-
 //Sandcastle_End
     Sandcastle.finishedLoading();
 }
